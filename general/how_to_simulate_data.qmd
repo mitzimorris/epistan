@@ -1,0 +1,382 @@
+---
+title: How to Write a Stan Model to Simulate Data and Why You Should
+author: Mitzi Morris
+format:
+  html:
+    code-fold: true
+jupyter: python3
+---
+
+```{python}
+#| echo: false
+import os
+import numpy as np
+import pandas as pd
+import json
+from random import randint
+from cmdstanpy import CmdStanModel, write_stan_json
+# notebook display options
+np.set_printoptions(precision=2)
+np.set_printoptions(suppress=True)
+pd.set_option('display.precision', 2)
+pd.options.display.float_format = '{:.2f}'.format
+```
+
+# How to Write a Stan Model to Simulate Data and Why You Should
+
+## Simulated Data 
+
+By "simulated data" we mean data generated from a set of known parameter values.
+
+## How
+
+In the Bayesian setting, we first generate parameters according to known priors and then use these to generate a dataset of the desired size and shape.
+To do this in Stan, we use Stan's [RNG functions for probability distributions](https://mc-stan.org/docs/functions-reference/conventions_for_probability_functions.html#distributions-prng)
+which may only be used in the transformed data or generated quantities blocks.
+In the transformed data block we use them to set up known parameters according to specified priors;
+in the generated quantities block we then use the model parameters to generate a dataset according to the some likelihood.
+
+## Why
+
+The data-generating program is the companion to the data-fitting model which infers the model parameters given data, i.e., it "solves the inverse problem".  Using a Stan program instead of data-generating script in Julia, Python, or R ensures that the same parameterization and implementation the probability distributions are used to generate the data and fit the model, thus a correctly implemented model should be able to recover the parameters.  Failure to do so indicates either Stan programmer error or model misspecification.
+
+Cite Gelman workflow paper:  "If our simulated-data check fails, in the sense that the inferences are not close to the assumed parameter values or if there seem to be model components that are not gaining any information from the data (Lindley, 1956, Goel and DeGroot, 1981), we recommend breaking down the model. Go simpler and simpler until we get the model to work. Then, from there, we can try to identify the problem, as illustrated in Section 8.2.
+The second thing that we check is if the true parameters can be recovered to roughly within the uncertainty implied by the fitted posterior distribution. This will not be possible if the data are not informative for a parameter, but it should typically happen otherwise. It is not appropriate simulate a single dataset from the model, compute the associated posterior distribution, and declare that everything works well."
+
+
+# Best Practice:  Start Simple
+
+CmdStan distributions provide a ["Hello, World" model and data](https://mc-stan.org/docs/cmdstan-guide/example_model_data.html):  `bernoulli.stan` and `bernoulli.data.json`.
+
+```stan
+data {
+  int<lower=0> N;
+  array[N] int<lower=0,upper=1> y;
+}
+parameters {
+  real<lower=0,upper=1> theta;
+}
+model {
+  theta ~ beta(1,1);  // uniform prior on interval 0,1
+  y ~ bernoulli(theta);
+}
+```
+
+This very simple model could be used to estimate disease prevalence in the general population given a set of diagnostic test results from a small fraction of the population, under the assumption that the test is perfectly accurate and the population is completely homogenous.
+
+### Stan program to generate a dataset (or several)
+
+The inputs to the above model are `N` and `y`, the number of observations and the set of binary outcomes, respectively, the model infers the value for parameter `theta`.    In the data-generating program:
+
++ `N` is stipulated directly in the `transformed data` block
++ `theta` is generated in the `transformed data` block by calling the Stan RNG function corresponding to the prior.
++ `y` is generated in the `generated quantities` block according by calling the Stan RNG function corresponding to the likelihood.
+
+
+```stan
+transformed data {
+  int N = 100;
+  real theta = uniform_rng(0.0, 1.0);   // generate parameter
+}
+generated quantities {
+  int num_observations = N;  // record size
+  real param_theta = theta;  // record param value
+  array[N] int test_results;  // simulate data
+  for (n in 1:N) {
+    test_results[n] = bernoulli_rng(theta);
+  }
+}
+```
+
+
+
+### Running the Data-generating Program
+
+The data-generating program is compiled like any other Stan model.
+Since it has no parameters, transformed parameters, or model blocks, there's no need to run any warmup iterations.
+Every iteration of this model generates a complete test dataset.
+Here we run it for 100 iterations which generates 100 datasets, all of which have the same value for the bernoulli parameter `theta`.
+
+```{python}
+hello_datagen = CmdStanModel(stan_file='m1_datagen.stan')
+hello_data = hello_datagen.sample(chains=1, iter_warmup=0, iter_sampling=100, show_progress=False)
+```
+
+In CmdStanPy, the "." operator + variable name is equivalent to the "stan_variable" function - this allows us to easily inspect the simulated data.
+
+```{python}
+print(f'N {hello_data.test_results[0].shape[0]}\n'
+      f'theta {hello_data.param_theta[0]:.2f}\n'
+      f'y {hello_data.test_results[0]}')
+```
+
+```{python}
+for i in range(10):
+    print(f'generated param: {hello_data.param_theta[i]:.2f} '
+          f'generated dataset mean: {np.sum(hello_data.test_results[i])/100}')
+```
+
+Given 100 bernoulli trials, the resulting dataset averages are not very accurate; across all 10K datapoints, we recover another digit of accuracy.
+
+```{python}
+np.sum(hello_data.test_results.ravel()) / (100 * 100)
+```
+
+### From Stan Outputs to Stan Inputs
+
+The input to `bernoulli.stan` consists of an integer `N` and an int array of observed results,
+
+To create the simulated dataset, we can use any iteration.   
+
+```{python}
+sim_data = {"N" : hello_data.test_results[0].shape[0], "y" : hello_data.test_results[0].astype(int)}
+sim_data
+```
+
+To save this dataset as a JSON file, we need to use the CmdStanPy function [write_stan_json](https://mc-stan.org/cmdstanpy/api.html#write-stan-json).
+
+```{python}
+write_stan_json("datagen_bernoulli.json", sim_data)
+```
+
+### Fitting the Simulated Data to the Target Model
+
+We have copied over the bernoulli model to this notebook directory and renamed it `m1_prevalence.stan`.
+
+```{python}
+m1_prevalence = CmdStanModel(stan_file='m1_prevalence.stan')
+m1_fit = m1_prevalence.sample(data=sim_data)
+```
+
+```{python}
+m1_fit.summary()
+```
+
+```{python}
+print(f'generated param theta {hello_data.param_theta[0]:.2f}')
+```
+
+### Efficiency Tuning: From Bernoulli to Binomial
+
+The data is a series of individual Bernoulli trials; this is more efficiently coded using the binomial distribution.
+
+```stan
+data {
+  int<lower=0> N;
+  array[N] int<lower=0,upper=1> y;
+}
+transformed data {
+  int ones = sum(y);
+  print(ones);
+}
+parameters {
+  real<lower=0,upper=1> theta;
+}
+model {
+  theta ~ beta(1, 1);
+  ones ~ binomial(N, theta);
+}
+```
+
+See the [Efficiency Tuning](https://mc-stan.org/docs/stan-users-guide/efficiency-tuning.html#exploiting-sufficient-statistics) Section of the Stan User's Guide for details.
+
+```{python}
+binom_prevalence = CmdStanModel(stan_file='m1_binom.stan')
+binom_fit = binom_prevalence.sample(data=sim_data)
+binom_fit.summary()
+```
+
+### Hierarchical Binomial Models of Population Demographics
+
+To account for different disease prevalence across demographic subpopulations,
+we naturally use a linear model or GLM to account for the combination of
+interactions between cross-cutting factors.
+
+A multi-level model allows for per-category effects.   (See Gelman and Hill chapters 11, 12)
+Given a set of categorical predictors used to stratify the population into distinct demographic subgroups,
+we can build hierarchical models with a group-level predictor on each category or combination of categories.
+For example, given predictors for sex, a fixed number of age ranges,
+and a fixed number of race/ethnicity categories, we have the following hierarchical regression:
+
+```stan
+data {
+  int<lower=1> N; // number of strata
+  int<lower=3> N_age, N_eth;
+  vector<lower=0, upper=1>[N] sex; // 0 = male, 1 = female
+  array[N] int<lower=1, upper=N_age> age;
+  array[N] int<lower=1, upper=N_eth> eth;
+  array[N] int<lower=0> tests;
+  array[N] int<lower=0> pos_tests; // observed outcome
+}
+parameters {
+  real alpha, beta_female;
+  real<lower=0> sigma_age, sigma_eth;
+  vector<multiplier=sigma_age>[N_age] beta_age;
+  vector<multiplier=sigma_eth>[N_eth] beta_eth;
+}
+model {
+  num_pos ~ binomial(tests,
+                     alpha + beta_female * sex + beta_age[age] + beta_eth[eth]);
+  // priors
+  alpha ~ normal(0, 5);
+  beta_female ~ normal(0, 2.5);
+  beta_age ~ normal(0, sigma_age);
+  beta_eth ~ normal(0, sigma_eth);
+  sigma_eth ~ normal(0, 2.5);
+  sigma_age ~ normal(0, 2.5);
+}                     
+```
+
+The number of strata `N` is implicitly `2 * N_age * N_eth`,
+but using this expression everywhere instead of `N` reduces the program's readability and maintainability.
+Furthermore, if the binomial data is aggregated from individual test data,
+and if there are no observations available for some subpopulation,
+then the size of the aggregated dataset will be less than the product of the category sizes,
+and therefore we need to specify `N` as well.
+
+### Generating Data for a Hierarchical Binomial Model
+
+The inputs to the above model are:
+
+- the data dimensions:  `N`, `N_age`, `N_eth` - the number of observations, age categories, and race/ethnicity categories, respectively.
+- the per-category binomial outcome `pos_tests`, the number of tests per demographic, and the outcome predictors `sex`, `age`, `eth`.
+
+We can stipulate (or allow the user to stipulate) the data dimensions.
+As discussed above, `N` is implicitly the product of the size of all categorical predictors,
+therefore we only need to know the number of categories for each predictor:  `N_obs`, `N_age`, and `N_eth`.
+In order generate the binomial data, we can either specify the number of tests per demographic,
+or specify the total number of individual observations (`N_obs`) and then allocating percentages of
+the total to each demographic.  Here we choose the latter approach.
+We further allow the user to specify the global intercept `alpha` instead of using a
+PRNG function to generate it; this too, can be made fully automatic.
+
+Data is simulated in the generated quantities block as follows:
+
++ Create a vector of per-category coefficient values
+
++ Create a simplex which describes the per-category proportion of the population
+in order to generate unequal number of observations across the demographic category.
+
++ Generate the data vectors `sex`, `age`, `eth`, `tests`, `pos_tests` using a nested loop:
+
+```stan
+  for (i_sex in 1:2) {
+    for (i_age in 1:N_age) {
+      for (i_eth in 1:N_eth) {
+        // compute per-category data and observed outcome
+      }
+    }
+  }
+```
+
+Putting this all together, we have the following data-generating program:
+
+```stan
+data {
+  int<lower=3> N_obs, N_age, N_eth;
+  real log_intercept;
+}
+transformed data {
+  int strata = 2 * N_age * N_eth;
+}
+generated quantities {
+  // parameter values
+  real alpha = log_intercept;
+  real beta_female = normal_rng(0, 2.5);
+  real sigma_age = normal_rng(0, 2.5);
+  vector[N_age] beta_age;
+  for (n in 1:N_age) {
+    beta_age[n] = normal_rng(0, sigma_age);
+  }
+  real sigma_eth = normal_rng(0, 2.5);
+  vector[N_eth] beta_eth;
+  for (n in 1:N_eth) {
+    beta_eth[n] = normal_rng(0, sigma_eth);
+  }
+  // observations per category (unequal)
+  vector[2] pct_sex = [0.4, 0.6]';
+  vector[N_age] pct_age = dirichlet_rng(rep_vector(2, N_age));
+  vector[N_eth] pct_eth = dirichlet_rng(rep_vector(1, N_eth));
+
+  // data
+  int N = strata
+  array[N] int sex, age, eth, pos_tests, tests;
+  array[N] real prob_pos_test;
+  int i = 0;
+  for (i_sex in 1:2) {
+    for (i_age in 1:N_age) {
+      for (i_eth in 1:N_eth) {
+        i += 1;
+        sex[i] = i_sex - 1; // coding M == 0, F == 1
+        age[i] = i_age;
+        eth[i] = i_eth;
+        tests[i] = to_int(pct_sex[i_sex] * pct_age[i_age] * pct_eth[i_eth] * N_obs);
+        prob_pos_test[i] = inv_logit(alpha + beta_female * (i_sex - 1) + beta_age[i_age] + beta_eth[i_eth]);
+        pos_tests[i] = binomial_rng(tests[i], prob_pos_test[i]);
+      }
+    }
+  }
+}
+```
+
+#### Exegesis of the `generated quantities` block
+
+To generate the true per-category parameters, we use Stan's PRNG functions.
+First use the same hyperparameters as in the Stan model to
+generate the hierarchical variance parameters `sigma_age` and `sigma_eth`,
+then we generage the true per-category parameters accordingly.
+
+To generate a simplex of per-category percentages we use the `dirichlet_rng` function.
+The per demographic percentage is simply the product of the these percentages,
+when is then multiplied by the total number of observations yeilding tests per category.
+
+To generate the data vectors, we use the nested `for` loop, where the innermost loop keeps track
+of the index for the current demographic.
+
+
+## Generating Data for a Hierarchical Model with a Non-standard Likelihood
+
+When modealing the outcome from a diagnostic test,
+we need to account for test sensitivity and specificity.
+
+
+### Test Sensitivity and Specificity
+
+Test sensitivity is the probability that an individual who has the disease will test positive ("true positive").
+Test specificity is the probability that an individual who doesn't have the disease will test negative ("true negative").
+
+Given an underlying disease prevalence, we can model the probability of a positive test as the combination of the probability of a true positive and the probability of a false positive:
+
+```stan
+positive ~ bernoulli(prev * sens + (1 - prev) * (1 - spec);
+```
+
+If we aggregate the data by population stratum, this becomes a binomial:
+
+```stan
+num_positive ~ binomial(num_tests, prev * sens + (1 - prev) * (1 - spec));
+```
+
+### Putting it together
+
+If the test is perfectly accurate - where both the sensitivity and specifity are 1,
+the likelihood is the same as in the hierarchical model above:
+
+```stan
+num_positive ~ binomial(num_tests, prev);
+```
+
+Most (if not all) tests are not perfectly accurate.
+The commonly used tests for Covid-19 are the nasal swabs where
+either the sample is sent to a lab for PCR testing, or the at-home test kits ("lateral flow"),
+which are generally estimated to have a sensitivity of 70-75% and 65%, respectively.
+Both kinds of test have a specificity of close to 99.5%.
+Given these estimates, we can build a model where sensitivity and specificity
+are passed in as data and used in the model block to compute the likelihood.
+
+If we assume that test sensitivity and specificity is independent of demographic factors,
+we can write a Stan model which takes into account both demographic factors as well
+as test sensitivity and specificity.
+
+
+

@@ -1,0 +1,130 @@
+---
+title: "Modeling Diagnostic Test Sensitivity and Specificity"
+format:
+    html: 
+      self-contained: true
+      css: tufte-styles.css
+      grid: 
+        margin-width: 350px
+execute: 
+  echo: fenced
+footnote-location: margin
+reference-location: margin
+citation-location: margin
+---
+
+## Overview
+
+#### Problem: accounting for variation in test sensitivity/specificity due to processing lab.
+
+
+In this case study we discuss the series of Stan programs presented in 
+[Gelman and Carpenter 2020, "Bayesian analysis of tests with unknown specificity and sensitivity"](https://rss.onlinelibrary.wiley.com/doi/10.1111/rssc.12435).
+This paper is a reanalysis of results reported in
+[COVID-19 Antibody Seroprevalence in Santa Clara County, California](https://www.medrxiv.org/content/10.1101/2020.04.14.20062463v2) by Bendavid et al.
+
+The data comes from a study done in April 2020, where 3330 residents of Santa Clara county CA were tested for COVID-19 antibodies.
+This was relatively early in the COVID-19 pandemic, when diagnostic tests were
+just becoming available outside of a hospital setting.
+The results of the study were widely reported in the American press
+and on [Gelman's blog](https://statmodeling.stat.columbia.edu/2020/04/19/fatal-flaws-in-stanford-study-of-coronavirus-prevalence/).
+Discussion on the blog led to the published paper.
+The models and data presented in the paper are available at [https://github.com/bob-carpenter/diagnostic-testing](https://github.com/bob-carpenter/diagnostic-testing).
+
+## Diagnostic testing:  specificity and sensitivity
+
+A [common classroom statistics problem](https://bookdown.org/content/4857/sampling-the-imaginary.html)
+is to determine whether or not a positive test for a rare disease is correct.
+The public health counterpart to this question is
+estimating the prevalence of the disease in the population at large
+given the rate of positive tests. 
+To estimate disease prevalence^[
+The *prevalence* of a disease (in a given [sub]population) is the
+probability of an individual being positive.<br>
+Let the random variable $$Z \in \{ 0, 1 \}$$ represent the disease status of an individual,
+where $Z = 1$ indicates the individual is positive for the disease and
+$Z = 0$ indicates they are negative.
+$$\textrm{prevalence} = \textrm{Pr}[Z = 1].$$
+]
+it is necessary to account for the
+specificity and sensitivity^[
+The *specificity* of a test is its accuracy for negative individuals.<br>
+Let the random variable $$Y \in \{ 0, 1 \}$$ represent the result of a diagnostic test,
+where $Y = 1$ indicates a positive test result and
+$Y = 0$ a negative result.<br>
+$$ \textrm{specificity} = \textrm{Pr}[Y = 0 \mid Z = 0]. $$
+The *sensitivity* of a test is its accuracy for positive individuals.
+$$ \textrm{sensitivity} = \textrm{Pr}[Y = 1 \mid Z = 1]. $$
+] 
+of the diagnostic test.
+When testing for low-prevalence or rare diseases
+or when adjusting a non-representative sample to the general population,
+misclassification of low-frequency items, i.e., an incorrect result
+for a rare disease, or an incorrect result for a member of a rarely-tested subpopulation,
+can greatly distort the resulting estimates.
+
+Throughout the COVID-19 pandemic,
+public health officials have relied on the results of opt-in COVID-19 tests
+to get estimates of the prevalence of the disease both in the community at large
+as well as in specific subpopulations in order to make informed policy decisions.
+Between outbreaks, the prevalence of COVID-19 in the general population is low.
+Throughout the pandemic, the nature of opt-in testing leads to a non-representative sample.
+This requires models which
+
+a. account for uncertainty due to imperfect test specificity and sensitivity 
+b. account for the non-representative nature of the sample
+
+To address (a) Gelman and Carpenter develop a hierarchical model which accounts for the uncertainty
+in the specificity and sensitivity of diagnostic tests for disease detection.
+
+To address (b) they develop a multi-level regression
+which uses demographic information collected from the participants in the sample
+and then use the census demographics to
+[post-stratify](https://mc-stan.org/docs/stan-users-guide/poststratification.html)
+to the general population and sub-populations of interest.
+
+## Synopsis of Gelman and Carpenter 2020
+
+In April 2020, 3330 residents of Santa Clara county CA were tested for COVID-19 antibodies.
+In addition to the study data, the authors provided the results from
+3 sensitivity studies and 13 specificity studies provided by the test manufacturer.
+
+In section 2, Gelman and Carpenter present model A1, 
+a simple Bayesian model which pools the data from studies of test sensitivity
+and specificity, and fit it to the Santa Clara data.
+The failings of this model are illustrated by Figure 1.
+Figure 1a shows that the uncertainty in the population prevalence is in large part driven by uncertainty in the specificity.
+Figure 2a shows that the posterior distribution of the prevalence is consistent with rates as low as 0% and as high as 2%.
+
+*margin - figures 1a and 1b*
+
+In section 3, they develop model A2:
+a hierarchical model of test sensitivity and specificity which provides
+partial pooling of test study data.
+In section 4 they investigate the behavior of this model with different hyperpriors
+on the sensitivity and specificity parameters.
+
+*margin - hierarchical model narrows estimate, with strong hyperpriors*
+
+In section 5 they present model A3:
+a multi-level model which combines the hierarchical component for
+test sensitivity and specificity with a multi-level regression on the
+the test-population demographics and does post-stratification
+to estimate disease prevalence in the general population.
+Because the Santa Clara study doesn't provide the demographics of the test subjects,
+they generate simulated data they can use to fit the model.
+
+In section 7, they disucss the limitations of the models presented in the article
+and conclude that
+
+> For the models in the present article, the most important user choices are: (a) what data to include in the analysis, (b) prior distributions for the hyperparameters, and (c) the structure and interactions to include in the MRP model. For these reasons, it would be difficult to set up the model as a plug-and-play system where users can just enter their data, push a button, and get inferences. Some active participation in the modeling process is required, which makes sense given the sparseness of the data.
+
+Active participation in the modeling process and choosing data, modeling interactions,
+and putting priors and hyperparameters on distructions necessarily requires either
+writing new Stan programs from scratch or modifying the published Stan code.
+Since many (or most) people prefer to do the latter, this code must be
+easy to understand and straightforward to modify and extend.
+In the following sections we present models A1, A2, and A3
+and review the corresponding Stan programs to improve
+readability, extensibility, and efficiency.
+
