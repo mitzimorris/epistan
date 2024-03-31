@@ -13,14 +13,16 @@ parameters {
   vector<multiplier=sigma_age>[N_age] beta_age;
   vector<multiplier=sigma_eth>[N_eth] beta_eth;
 }
+transformed parameters {
+  array[N] real<lower=0> prob_pos_test = alpha + beta_female * sex + beta_age[age] + beta_eth[eth];
+}
 model {
-  num_pos ~ binomial(tests,
-                     alpha + beta_female * sex + beta_age[age] + beta_eth[eth]);
+  num_pos ~ binomial(tests, prob_pos_test)
   // priors
   alpha ~ normal(0, 5);
   beta_female ~ normal(0, 2.5);
   beta_age ~ normal(0, sigma_age);
   beta_eth ~ normal(0, sigma_eth);
-  sigma_age ~ normal(0, 2.5);
   sigma_eth ~ normal(0, 2.5);
-}                     
+  sigma_age ~ normal(0, 2.5);
+}
