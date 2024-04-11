@@ -4,6 +4,19 @@ author: Mitzi Morris
 format:
   html:
     code-fold: true
+    theme: cosmo
+    syntax-definitions:
+      - ../theming/stan.xml
+    highlight-style:
+      light: ../theming/tango.theme
+    code-copy: true
+    code-overflow: wrap
+    css: ../theming/quarto_styles.css
+    toc: true
+    toc-location: left
+reference-location: margin
+citation-location: margin
+
 jupyter: python3
 ---
 
@@ -22,56 +35,67 @@ pd.set_option('display.precision', 2)
 pd.options.display.float_format = '{:.2f}'.format
 ```
 
-# How to Write a Stan Model to Simulate Data and Why You Should
-
+## Preface
 
 This notebook demonstrates how to write a Stan program to build one or more datasets which can be used
 to develop, test, and demo a Stan model.
 
 
-## Simulated Data 
+### Simulated Data 
 
 By "simulated data" we mean data generated from a set of known parameter values.
 
-## How
+### Why You Should
 
-The Stan probabalistic programming language is used to specify a parametric model of the data-generating process.
-The latent parameters are unobserved; therefore Stan's inference algorithms solve the *inverse problem*:
-given the data, they learn the parameters of the specified likelihood.
-A data-generating program is the result of rewriting the Stan model and using Stan's
-[pseudorandom number generator functions](https://mc-stan.org/docs/functions-reference/conventions_for_probability_functions.html#distributions-prng)
-which correspond to the probability distributions of the model's likelihood and priors.
-
-PRNG functions may only be used in the transformed data or generated quantities blocks.
-Therefore we rewrite the Stan model by moving the model block's likelihood and prior statements
-to the generated quantities block, replacing calls to the sampling distributions with calls to
-the corresponding PRNG functions.
-The variables defined in the parameters and transformed parameters block are either
-passed in a data values, computed once in the transformed data block, or computed
-for every sampler iteration in the generated quantities block.
-Because the rewritten Stan code no longer has a parameters, transformed parameters, or model block,
-we call this a "program", rather than a "model".
-
-## Why
-
-The data-generating program is the companion to the data-fitting model
-which infers the model parameters given data, i.e., it "solves the inverse problem".
+A Stan model infers the model parameters given the data.
+The data-generating program flips the computation:
+given parameters, it outputs the data according to the specified distributions.
 Using a Stan program instead of data-generating script in Julia, Python, or R
 ensures that the same parameterization and implementation the probability distributions
-are used to generate the data and fit the model, thus a correctly
-implemented model should be able to recover the parameters.
-If the model cannot recover the parameters from the generated dataset, then either
-the implementation of the data-generating program does not match the model, or the model is fundamentally
-misspecified.
+are used to generate the data and fit the model.
 
 
-# Best Practice:  Start Simple
+A correctly implemented model should be able to recover the parameters given the generated dataset.
+If it can't, then either the implementation of the data-generating program does not match the model
+(a programming error) or the model is fundamentally misspecified (a modeling error).
+[Both programming errors and modeling errors are all too common;
+eliminate all possibility of the former before trying to fix the latter.]{.aside}
+
+
+### How to Do It
+
+The data-generating program is based on the Stan model.
+
+* Sampling statements are rewritten using the corresponding
+[pseudorandom number generator functions](https://mc-stan.org/docs/functions-reference/conventions_for_probability_functions.html#distributions-prng),
+which can only be used in the `transformed data` and `generated quantities` blocks.
+
+* Parameter variable declarations and definitions in the `parameters`, `transformed parameters`, and `model` block
+are either moved to the `data` block and passed in as data or defined in the `transformed data` block;
+alternatively, they can be declared and defined in the `generated quantities` block.
+The former strategy will generate multiple datasets for the same set of parameters;
+this can be useful if you wish to generate datasets for a hypothetical set of parameters
+chosen from the posterior distribution.
+The latter strategy generates multiple datasets, each from a different set of parameters;
+this can be useful when investigating the choice of priors and hyper-priors.
+See the Stan User's Guide section on [Posterior and Prior Predictive Checks](https://mc-stan.org/docs/stan-users-guide/posterior-predictive-checks.html)
+for more discussion.
+
+Since all computation is moved from the `model` block into the `transformed data` and `generated quantities` blocks,
+the resulting Stan code is referred to as a "program", rather than a "model".
+
+
+## Best Practice:  Start Simple
 
 Starting from a trivial model makes it easy to verify that all components
 of the system are functioning properly.
+
+### Stan's "Hello World" model:  `bernoulli.stan`
+
+
 The CmdStan distribution provides a
-["Hello, World" model](https://mc-stan.org/docs/cmdstan-guide/example_model_data.html) `bernoulli.stan`,
-and corresponding dataset: `bernoulli.data.json`.
+["Hello, World" model](https://mc-stan.org/docs/cmdstan-guide/example_model_data.html) `bernoulli.stan`
+(included with this notebook).
 
 ```stan
 data {
@@ -97,7 +121,10 @@ given a small set of diagnostic test results under the following assumptions:
 Since these assumptions are rarely, if ever met, a better model would account for noisy tests,
 non-homogenous populations, and what is known about the disease.
 
-But before we refine the model, we start by building the corresponding data-generating program.
+
+**Start with "Hello", Please!**
+
+Before addressing the above problems, let's build the corresponding data-generating program.
 By fitting the model to simulated data with every successive refinement, we gain a better
 understanding of the stochastic data-generating process and the ability of Stan's inference
 algorithms to handle the resulting posterior geometries.
@@ -105,32 +132,97 @@ By using Stan's MCMC sampler to produce multiple simulated datasets,
 we can investigate how well the model will fit different data regimes.
 
 
-### Stan program to generate a dataset (or several)
+### Generating "Hello World" Data
+
+To go with the example model `bernoulli.stan`,
+the CmdStan distribution provides an example dataset `bernoulli.data.json`:
+
+```
+{
+    "N" : 10,
+    "y" : [0,1,0,0,0,0,0,0,0,1]
+}
+```
 
 The Stan program `bernoulli_datagen.stan` generates the observed data `y` according to
 a specified parameter `theta`, the probability of success.
 
 ```stan
 data {
-  int N_obs;
+  int N;
 }
 generated quantities {
   real theta = beta_rng(1, 1);  // prob of success (uniform prior)
-  array[N_obs] int y = bernoulli_rng(rep_array(theta, N_obs));
+  array[N] int y;  // outcome of each bernoulli trial
+  for (n in 1:N) {
+    y[n] = bernoulli_rng(theta);
+  }
 }
 ```
 
-+ The number of observations `N_obs` is provided as data.
++ The number of observations `N` is provided as data.
 + Both `theta` and `y` are generated in the `generated quantities block`.
 
-Alternatively we could:
 
-+ Let parameter `theta` be fixed as data or generated in the `transformed data` block.
-This will create multiple datasets all generated from the same probability of success.
+::: {.callout-note appearance="simple"}
+Instead of using a loop to populate `y`,
+we could use the vectorized `bernoulli_rng` function, which would
+generate the entire array `y` by creating N copies of `theta`:
 
-+ Let the parameters to the `beta_rng` function be passed in as `real` data variables `alpha`, `beta`,
-thus testing the influence of the prior on the likelihood under different amounts of data.
+```stan
+y[n] = bernoulli_rng(rep_array(theta, N));
+```
 
+But in this case, a loop is both more efficient
+(no need to allocate an extra array) and easier to read.
+:::
+
+Here are a few more ways we could write the data-generating program.
+
+::: {.grid}
+
+::: {.g-col-6}
+
+Let parameter `theta` be fixed as data or generated in the `transformed data` block.
+
+```stan
+data {
+  int N;
+}
+transformed data {
+  real theta = beta_rng(1, 1);
+}
+generated quantities {
+  array[N] int y;
+  for (n in 1:N) {
+    y[n] = bernoulli_rng(theta);
+  }
+}
+```
+:::
+
+::: {.g-col-6}
+
+Let the parameters to the `beta_rng` function be passed in as `real` data variables `alpha`, `beta`.
+
+```stan
+data {
+  int N;
+  real alpha;
+  real beta;
+}
+transformed data {
+  real theta = beta_rng(alpha, beta);
+}
+generated quantities {
+  array[N] int y;
+  for (n in 1:N) {
+    y[n] = bernoulli_rng(theta);
+  }
+}
+```
+:::
+:::
 
 
 ### Running the Data-generating Program
@@ -138,11 +230,13 @@ thus testing the influence of the prior on the likelihood under different amount
 The data-generating program is compiled like any other Stan model.
 Since it has no parameters, transformed parameters, or model blocks, there's no need to run any warmup iterations.
 Every iteration of this model generates a complete test dataset.
-Here we run it for 100 iterations which generates 100 datasets.
+Here we run it for 10 iterations, resulting in 10 datasets.
 
 ```{python}
+#| include: true
+
 hello_datagen = CmdStanModel(stan_file='bernoulli_datagen.stan')
-hello_data = hello_datagen.sample(data={"N_obs":100}, chains=1, iter_warmup=0, iter_sampling=100, show_progress=False)
+hello_data = hello_datagen.sample(data={"N_obs":100}, chains=1, iter_warmup=0, iter_sampling=10, show_progress=False)
 ```
 
 
@@ -161,7 +255,6 @@ for i in range(10):
 ```
 
 Given 100 bernoulli trials, the resulting dataset averages are not very accurate.  
-(Exercise: rerun with N=10000).
 
 In CmdStanR it is necessary to use methods from the `posterior` package to retrieve the generated data in the correct format.
 
@@ -169,8 +262,12 @@ In CmdStanR it is necessary to use methods from the `posterior` package to retri
 ### From Stan Outputs to Stan Inputs
 
 The input to `bernoulli.stan` consists of an integer `N` and an int array of observed results.
-To create the simulated dataset, we can use any draw in the sample.
-Each draw is generated according to a different value of `theta`; we save this as `theta_true`;
+To create the simulated dataset, we assemble a Python dictionary with entries for
+data variables `N` and `y`, using  use any draw in the sample.
+Because each draw is generated according to a different value of `theta`;
+we also record the corresponding generated value of theta as `theta_true`.
+[To save the Python dict as a JSON file, use the CmdStanPy function
+[write_stan_json](https://mc-stan.org/cmdstanpy/api.html#write-stan-json).]{.aside}
 
 
 ```{python}
@@ -178,14 +275,6 @@ theta_true = hello_data.theta[0]
 sim_data = {"N" : hello_data.y[0].shape[0], "y" : hello_data.y[0].astype(int)}
 sim_data
 ```
-
-To save this dataset as a JSON file, we need to use the CmdStanPy function
-[write_stan_json](https://mc-stan.org/cmdstanpy/api.html#write-stan-json).
-
-```{python}
-write_stan_json("datagen_bernoulli.json", sim_data)
-```
-
 
 ### Fitting the Simulated Data to the Target Model
 
@@ -200,44 +289,64 @@ bernoulli_fit = bernoulli_model.sample(data=sim_data)
 bernoulli_fit.summary()
 ```
 
+As noted above, 100 bernoulli trials produces a noisy dataset;
+we cannot recover the true data generating parameter with anything more than
+$\sqrt{100}$ digits of precision.
+
+
 ```{python}
 print(f'data generating param theta {theta_true}')
 ```
 
-### Efficiency Tuning: From Bernoulli to Binomial
+### Exercises
 
-The data is a series of individual Bernoulli trials; this is more efficiently coded using the binomial distribution.
+1. Predictive accuracy:  how much data is required to recover `theta` to 3 digit precision?
+
+2. Prior sensitivity analysis: implement the data-generating program which lets you specify the hyper-parameters on the beta distribution; do not change the corresponding prior in model `bernoulli.stan`.  Under what circumstances does this affect the model fit?
+
+
+## First Model Refinement: From Bernoulli to Binomial
+
+The example model `bernoulli.stan`, can be recoded to using the binomial distribution.
+Given the binary encoding where `1` indicates success and `0` failure, this is `sum(y)`.
+Here is the model `binomial.stan`:
 
 ```stan
 data {
   int<lower=0> N;
-  int<lower=0> n_success;
+  array[N] int<lower=0,upper=1> y;
+}
+transformed data {
+  int sum_y = sum(y);
 }
 parameters {
   real<lower=0,upper=1> theta;
 }
 model {
   theta ~ beta(1, 1);
-  n_success ~ binomial(N, theta);
+  sum_y ~ binomial(N, theta);
 }
 ```
 
-See the
-[Efficiency Tuning](https://mc-stan.org/docs/stan-users-guide/efficiency-tuning.html#exploiting-sufficient-statistics)
-section of the Stan User's Guide for details.
-
-For this model, instead of providing the vector `y`, we provide the number of successful trials.
-Given the binary encoding where `1` indicates success and `0` failure, this is `sum(y)`.
-
 
 ```{python}
-sim_data['n_success'] = sum(sim_data['y'])
 binomial_model = CmdStanModel(stan_file='binomial.stan')
 binom_fit = binomial_model.sample(data=sim_data)
+print("Binomial Fit")
 binom_fit.summary()
 ```
 
-The power of these models is the same.
-In order to see a difference in efficiency, we need to run them for a very long time; overhead is dominated by I/0
+
+Given the same input data, the power of these models is the same
+because the total number of observations are the same.
+For these trivial models with no predictors, there are no measurable gains in performance.
+With more complex models with more predictors and many demographic populations of interest,
+the perfomance gains are significant.
+For further discussion, see the
+[Efficiency Tuning](https://mc-stan.org/docs/stan-users-guide/efficiency-tuning.html#exploiting-sufficient-statistics)
+section of the Stan User's Guide.
+
+
+## Second Model Refinement: Adding Categorical Predictors
 
 

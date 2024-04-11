@@ -1,11 +1,14 @@
 data {
   int<lower=0> N;
-  int<lower=0> n_success;
+  array[N] int<lower=0,upper=1> y;
+}
+transformed data {
+  int sum_y = sum(y);
 }
 parameters {
   real<lower=0,upper=1> theta;
 }
 model {
   theta ~ beta(1, 1);
-  n_success ~ binomial(N, theta);
+  sum_y ~ binomial(N, theta);
 }
