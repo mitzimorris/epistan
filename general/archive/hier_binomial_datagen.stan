@@ -8,21 +8,21 @@ transformed data {
 generated quantities {
   // parameter values
   real alpha = log_intercept;
-  real beta_female = normal_rng(0, 1);
-  real sigma_age = abs(normal_rng(0, 1));
+  real beta_female = normal_rng(0, 2.5);
+  real sigma_age = abs(normal_rng(0, 2.5));
   vector[N_age] beta_age;
   for (n in 1:N_age) {
     beta_age[n] = normal_rng(0, sigma_age);
   }
-  real sigma_eth = abs(normal_rng(0, 1));
+  real sigma_eth = abs(normal_rng(0, 2.5));
   vector[N_eth] beta_eth;
   for (n in 1:N_eth) {
     beta_eth[n] = normal_rng(0, sigma_eth);
   }
   // observations per category (unequal)
   vector[2] pct_sex = [0.4, 0.6]';
-  vector[N_age] pct_age = dirichlet_rng(rep_vector(2, N_age));
-  vector[N_eth] pct_eth = dirichlet_rng(rep_vector(1, N_eth));
+  vector[N_age] pct_age = dirichlet_rng(rep_vector(3, N_age));
+  vector[N_eth] pct_eth = dirichlet_rng(rep_vector(3, N_eth));
 
   // data
   int N = strata;

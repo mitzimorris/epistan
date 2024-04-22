@@ -1,11 +1,10 @@
 data {
-  int N_obs;
+  int N;
 }
 generated quantities {
-  int N = N_obs;
-  array[N_obs] int test_results;  // observed outcomes
-  real theta = uniform_rng(0.0, 1.0);  // probability of success
+  real theta = beta_rng(1, 1);  // chance of success (uniform prior)
+  array[N] int y;  // outcome of each bernoulli trial
   for (n in 1:N) {
-    test_results[n] = bernoulli_rng(theta);
+    y[n] = bernoulli_rng(theta);
   }
 }
