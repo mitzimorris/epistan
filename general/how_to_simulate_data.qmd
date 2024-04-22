@@ -4,15 +4,15 @@ author: Mitzi Morris
 format:
   html:
     theme:
-      - ../theming/theme.scss
+      - theming/theme.scss
       - cosmo
     syntax-definitions:
-      - ../theming/stan.xml
+      - theming/stan.xml
     highlight-style:
-      light: ../theming/tango.theme
+      light: theming/tango.theme
     code-copy: true
     code-overflow: wrap
-    css: ../theming/quarto_styles.css
+    css: theming/quarto_styles.css
     toc: true
     toc-location: left
     grid:
@@ -263,7 +263,7 @@ Here we run it for 10 iterations, resulting in 10 datasets.
 ```{python}
 #| output: false
 hello_datagen = CmdStanModel(stan_file='bernoulli_datagen.stan')
-hello_data = hello_datagen.sample(data={"N_obs":100}, chains=1, iter_warmup=0, iter_sampling=10)
+hello_data = hello_datagen.sample(data={"N":100}, chains=1, iter_warmup=0, iter_sampling=10)
 ```
 
 
@@ -584,10 +584,10 @@ We examine the per-draw generated datasets.
 
 ```{python}
 for i in range(10):
-    print('alpha', data_p0_g2.alpha[])
-    print('sigma_age', data_p0_g2.sigma_age[], 'beta_age', data_p0_g2.beta_age[])
-    print('sigma_eth', data_p0_g2.sigma_eth[], 'beta_eth', data_p0_g2.beta_eth[])
-    print('positive tests: ', data_p0_g2.pos_tests[].astype(int), '\n')
+    print('alpha', data_p0_g2.alpha[i])
+    print('sigma_age', data_p0_g2.sigma_age[i], 'beta_age', data_p0_g2.beta_age[i])
+    print('sigma_eth', data_p0_g2.sigma_eth[i], 'beta_eth', data_p0_g2.beta_eth[i])
+    print('positive tests: ', data_p0_g2.pos_tests[i].astype(int), '\n')
 ```
 
 
