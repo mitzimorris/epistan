@@ -1,11 +1,12 @@
-// 1 binary predictor - population effect
-// 2 categorical predictors - group-level effects
+// 1 binary predictor
+// 2 categorical predictors
 data {
   int<lower=0> N_obs;
   int<lower=1> N_age, N_eth;
 }
 transformed data {
   int N = 2 * N_age * N_eth;
+  int N_tests = N_obs %/% N;  // integer division
 }
 generated quantities {
   // true parameters
@@ -22,7 +23,6 @@ generated quantities {
     beta_eth[n] = normal_rng(0, sigma_eth);
   }
   // data
-  int N_tests = N_obs %/% N;  // integer division
   array[N] int<lower=0> tests = rep_array(N_tests, N);
   array[N] int pos_tests, sex, age, eth;
   {

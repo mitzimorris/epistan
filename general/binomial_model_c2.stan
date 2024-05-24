@@ -1,9 +1,7 @@
 data {
   int<lower=0> N;  // strata (distinct subpopulations)
-  int<lower=1> N_age;
-  int<lower=1> N_eth;
-  array[N] int<lower=0> tests;
-  array[N] int<lower=0> pos_tests;
+  int<lower=1> N_age, N_eth;
+  array[N] int<lower=0> tests, pos_tests;
   array[N] int<lower=1, upper=N_age> age;
   array[N] int<lower=1, upper=N_eth> eth;
 }
