@@ -51,7 +51,7 @@ to develop, test, and demo a Stan model.
 The examples used are based on challenges faced by epidemiologist and public health officials:
 how to estimate disease prevalence in the general population and subpopulations of interest
 from diagnostic test data.
-These models can be used for any observational dataset consiting of a per-datum
+These models can be used for any observational dataset consisting of a per-datum
 vector of categorical features and a binary outcome or response.
 
 ### Simulated Data 
@@ -100,7 +100,7 @@ to run any number of iterations.
 With each iteration, the statements in the generated quantities block will generate a complete dataset.
 
 If the parameters are defined as data, the program will generate many draws from the same parameters,
-thus demonstrating the range of behavoirs compatible with a single draw or summary from the fitted model.
+thus demonstrating the range of behaviors compatible with a single draw or summary from the fitted model.
 If the parameters are defined in the generated quantities block,
 each generated dataset comes from a different set of parameters.
 This facilitates investigation of the the choice of priors and hyper-priors and prior predictive distributions.
@@ -137,22 +137,22 @@ model {
 This model could be used to estimate disease prevalence in the general population
 given a small set of diagnostic test results under the following assumptions:
 
- - the population is completely homogenous
- - the test is perfectly accurate
- - the disease prevalence in the general population could be anything, from none to all.
-
-Since these assumptions are rarely, if ever met, a better model would account for
-non-homogenous populations, noisy tests, and what is already known about the disease.
-
+ - all individuals are alike with respect to disease susceptibility, i.e. the test data is i.i.d.
+ - the test is perfectly accurate.
+ - any level of disease prevalence is possible.
+ 
 
 **Always Start with "Hello, World!"**
 
-It's tempting to start by refining the above model to address these obvious deficits - *please don't!* </br>
+The above set of assumptions are rarely met.
+A more realistic model would account for individual characteristics,
+noisy tests, and what is already known about the disease.
+It's tempting to start by refining the Bernoulli model to address these obvious deficits - *please don't!* </br>
 As [the Wikipedia](https://en.wikipedia.org/wiki/%22Hello,_World!%22_program) explains:
 
 > A "Hello, World!" program is often the first written by a student of a new programming language, but such a program can also be used as a sanity check to ensure that the computer software intended to compile or run source code is correctly installed, and that its operator understands how to use it.
 
-Furthermore, in the Bayesian workflow,  this simple Bernoulli model provides a baseline.
+In the Bayesian workflow, this simple Bernoulli model provides a baseline.
 By fitting the model to simulated data with every successive refinement, we gain a better
 understanding of the stochastic data-generating process and the ability of Stan's inference
 algorithms to handle the resulting posterior geometries.
@@ -255,19 +255,25 @@ generated quantities {
 
 ### Running the Data-generating Program
 
+
 The data-generating program is compiled like any other Stan model.
-Since it has no parameters, transformed parameters, or model blocks, there's no need to run any warmup iterations.
+Since there are no parameter variables and corresponding model block,
+no warmup iterations are necessary.
 Every iteration of this model generates a complete test dataset.
+
 Here we run it for 10 iterations, resulting in 10 datasets.
+The input data is a single value `N`, the number of bernoulli trials;
+here we set this number to $100$.
 
 ```{python}
 #| output: false
 hello_datagen = CmdStanModel(stan_file='bernoulli_datagen.stan')
-hello_data = hello_datagen.sample(data={"N":100}, chains=1, iter_warmup=0, iter_sampling=10)
+hello_data = hello_datagen.sample(data={"N":100}, chains=1, fixed_param=True, iter_sampling=10)
 ```
 
-
-In CmdStanPy the "." operator + variable name is equivalent to the "stan_variable" function - this allows us to easily inspect the simulated data.
+We inspect the simulated data from the first draw.
+[In CmdStanPy the "." operator + variable name is equivalent to the "stan_variable" function.
+In CmdStanR it is necessary to use methods from the `posterior` package to retrieve the generated data in the correct format.]{.aside}
 
 ```{python}
 print(f'N {hello_data.y[0].shape[0]}\n'
@@ -275,15 +281,26 @@ print(f'N {hello_data.y[0].shape[0]}\n'
       f'y {hello_data.y[0]}')
 ```
 
+We compare the generating parameter `theta` to the fraction of successes in `y`.
+
 ```{python}
 for i in range(10):
     print(f'generated param: {hello_data.theta[i]:.2f} '
-          f'generated dataset mean: {np.sum(hello_data.y[i])/100}')
+          f'generated dataset mean: {np.sum(hello_data.y[i])/hello_data.y[1].shape[0]}')
 ```
 
-Given 100 bernoulli trials, the resulting dataset averages are not very accurate.  
+Given 100 bernoulli trials, the resulting dataset averages are not very accurate.
 
-In CmdStanR it is necessary to use methods from the `posterior` package to retrieve the generated data in the correct format.
+::: {.callout-note appearance="simple"}
+The  the precision of an estimate increases as the sample size increases, according to the formula
+
+$\text{Precision} = \frac{1}{\sqrt{N}}$
+
+Here, $\frac{1}{\sqrt{100}} = 0.1$, which implies that the estimate is only accurate
+up to $1$ decimal place.
+
+:::
+
 
 
 ### From Stan Outputs to Stan Inputs
@@ -319,9 +336,8 @@ print("Bernoulli Fit")
 bernoulli_fit.summary()
 ```
 
-As noted above, 100 bernoulli trials produces a noisy dataset;
-we cannot recover the true data generating parameter with anything more than
-$\sqrt{100}$ digits of precision.
+As noted above, 100 bernoulli trials produces a dataset
+which is only accurate to $1$ decimal place.
 
 
 ```{python}
@@ -366,7 +382,8 @@ sim_data['successes'] = sum(sim_data['y'])
 We compile and fit the model to the simulated data.
 
 ```{python}
-binomial_model = CmdStanModel(stan_file='binomial.stan')
+#| output: false
+   binomial_model = CmdStanModel(stan_file='binomial.stan')
 binom_fit = binomial_model.sample(data=sim_data)
 ```
 
@@ -374,6 +391,12 @@ binom_fit = binomial_model.sample(data=sim_data)
 #| echo: false
 print("Binomial Fit")
 binom_fit.summary()
+```
+
+```{python}
+#| echo: false
+print("Bernoulli Fit")
+bernoulli_fit.summary()
 ```
 
 Given the same input data, the power of these models is the same
@@ -399,19 +422,16 @@ across all categories of each feature.
 As a concrete example, consider a dataset where the test results have
 categorical information on age group and racial/ethnic group for each test taker
 and have been aggregated into bins according to the cross-product of age, ethnicity.
-This is model `binomial_model_p0_g2.stan`.
-[The suffix `p0_g2` is shorthand for "0 population-level effects,
-2 group-level effects", in an attempt to encode model structure information
-in the filename. For this case study, and in the Bayesian Workflow
-in general, choosing good names for alternative models is challenging.]{.aside}
+This is model `binomial_model_c2.stan`.
+[When creating many models, it is challenging to come up with short but informative names.
+Here the suffix `c2` is shorthand for "2 categorial predictors effects".]{.aside}
+
 
 ```stan
 data {
   int<lower=0> N;  // strata (distinct subpopulations)
-  int<lower=1> N_age;
-  int<lower=1> N_eth;
-  array[N] int<lower=0> tests;
-  array[N] int<lower=0> pos_tests;
+  int<lower=1> N_age, N_eth;
+  array[N] int<lower=0> tests, pos_tests;
   array[N] int<lower=1, upper=N_age> age;
   array[N] int<lower=1, upper=N_eth> eth;
 }
@@ -499,22 +519,30 @@ For a small set of known co-variates, explicit, verbose code is easier to deal w
 ### Generating Data for Hierarchical Binomial Logistic Regression
 
 We now proceed to rewrite this model as a data-generating program.
-The model's data inputs consist of
+Model `binomial_model_c2.stan` has data variables for
 
-* Data size and shape: how many observations, how many categories for age and ethnicity?
+* The data size and shape: number of observations, number of categories for age and ethnicity.
 
-* The observations: demographic data, test outcomes.
+* The observations: demographic information, test outcomes.
 
 We need to know the number of age, ethnicity categories before
-choosing the regression co-efficients for each.
-We also want to be able to specify the total number of observations
-so that we can explore model fits for different data regimes.
+choosing the regression co-efficients for each, as well as the total number of observations.
+Therefore, as in the `bernoulli_datagen.stan` program, these are data variables
+which must be specified by the user.
 
-For this version of the model, 
-we assume an equal number of observations for each population demographic
-and that all demographics are observed.
-Therefore the total number of strata `N` is the cross-product of `N_age` and `N_eth`.
-This computation must done in the `transformed data` block
+For this version of the model, we assume:
+
++ all population demographics are observed; therefore number of strata `N` is the cross-product of `N_age` and `N_eth`.
+
++ equal number of observations for each population demographic; therefore the number of tests per strata
+is `N div N_obs`.
+
+The `transformed data` block is used to compute `N`, the number of strata.
+This is necessary because Stan’s matrices, vectors, and array variables are sized
+when they are declared and may not be dynamically resized; in order to enforce this
+constraint, 
+in order to be able to declare a series of data arrays of size `N` in the
+`generated quantities` block
 because in the `generated quantities` block we will declare a series of
 data arrays of size `N`.
 In the `generated quantities` block,
@@ -522,11 +550,9 @@ we first choose a set of values for the regression parameters,
 then we generate the binomial outcomes.
 
 The binomial model, rewritten as its data-generating counterpart is
-in file `binomial_datagen_p0_g2.stan`:
+in file `binomial_datagen_c2.stan`:
 
 ```stan
-// no population effect
-// 2 categorical predictors - group-level effects
 data {
   int<lower=0> N_obs;
   int<lower=1> N_age, N_eth;
@@ -569,53 +595,53 @@ generated quantities {
 
 ### Running the Data Generating Program, Fitting the Model
 
-As above, we compile the program `binomial_datagen_p0_g2.stan`,
+As above, we compile the program `binomial_datagen_c2.stan`,
 specify the size and shape of the generated dataset,
 and run the model for 10 iterations using a single chain.
 
 ```{python}
 #| output: false
-binom_datagen_p0_g2 = CmdStanModel(stan_file='binomial_datagen_p0_g2.stan')
+binom_datagen_c2 = CmdStanModel(stan_file='binomial_datagen_c2.stan')
 datagen_size_shape = {'N_obs':3300, 'N_age':11, 'N_eth':3}
-data_p0_g2 = binom_datagen_p0_g2.sample(data=datagen_size_shape, chains=1, iter_warmup=0, iter_sampling=10)
+data_c2 = binom_datagen_c2.sample(data=datagen_size_shape, chains=1, fixed_param=True, iter_sampling=10)
 ```
 
 We examine the per-draw generated datasets.
 
 ```{python}
 for i in range(10):
-    print('alpha', data_p0_g2.alpha[i])
-    print('sigma_age', data_p0_g2.sigma_age[i], 'beta_age', data_p0_g2.beta_age[i])
-    print('sigma_eth', data_p0_g2.sigma_eth[i], 'beta_eth', data_p0_g2.beta_eth[i])
-    print('positive tests: ', data_p0_g2.pos_tests[i].astype(int), '\n')
+    print('alpha', data_c2.alpha[i])
+    print('sigma_age', data_c2.sigma_age[i], 'beta_age', data_c2.beta_age[i])
+    print('sigma_eth', data_c2.sigma_eth[i], 'beta_eth', data_c2.beta_eth[i])
+    print('positive tests: ', data_c2.pos_tests[i].astype(int), '\n')
 ```
 
 
 We assemble the input data from the first draw.
 
 ```{python}
-sim_data = {'N': data_p0_g2.tests[0].shape[0],
-            'N_age': data_p0_g2.beta_age[0].shape[0],
-            'N_eth': data_p0_g2.beta_eth[0].shape[0],
-    	    'age': data_p0_g2.age[0].astype(int),
-    	    'eth': data_p0_g2.eth[0].astype(int),
-            'tests': data_p0_g2.tests[0].astype(int),
-    	    'pos_tests': data_p0_g2.pos_tests[0].astype(int)}
+sim_data = {'N': data_c2.tests[0].shape[0],
+            'N_age': data_c2.beta_age[0].shape[0],
+            'N_eth': data_c2.beta_eth[0].shape[0],
+    	    'age': data_c2.age[0].astype(int),
+    	    'eth': data_c2.eth[0].astype(int),
+            'tests': data_c2.tests[0].astype(int),
+    	    'pos_tests': data_c2.pos_tests[0].astype(int)}
 ```
 
 We compile and run the binomial model.
 
 ```{python}
-binom_p0_g2 = CmdStanModel(stan_file='binomial_model_p0_g2.stan')
-binom_p0_g2_fit = binom_p0_g2.sample(data=sim_data)
-binom_p0_g2_fit.summary()
+binom_c2 = CmdStanModel(stan_file='binomial_model_c2.stan')
+binom_c2_fit = binom_c2.sample(data=sim_data)
+binom_c2_fit.summary()
 ```
 
 ### Adding a population-level predictor
 
 When biological sex is coded as a binary variable, values {0, 1},
 we can encode it as a population-level effect;
-this is model `binomial_model_p1_g2.stan`.
+this is model `binomial_model_b1_c2.stan`.
 
 ```stan
 data {
@@ -654,7 +680,7 @@ generated quantities {
 }
 ```
 
-**Exercise:**   Write the corresponding data generating program:  `binomial_datagen_p1_g2.stan`.
+**Exercise:**   Write the corresponding data generating program:  `binomial_datagen_b1_c2.stan`.
 (Check your code against the program included with this case study).
 
 
