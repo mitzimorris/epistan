@@ -1,4 +1,22 @@
-# Estimating the general prevalence of COVID-19<br>\linebreak from tests on a non-representative sample
+---
+title: "Modeling Diagnostic Test Sensitivity and Specificity"
+format:
+    html: 
+      self-contained: true
+      css: tufte-styles.css
+      grid: 
+        margin-width: 350px
+execute: 
+  echo: fenced
+footnote-location: margin
+reference-location: margin
+citation-location: margin
+---
+
+## Overview
+
+#### Problem: accounting for variation in test sensitivity/specificity due to processing lab.
+
 
 In this case study we discuss the series of Stan programs presented in 
 [Gelman and Carpenter 2020, "Bayesian analysis of tests with unknown specificity and sensitivity"](https://rss.onlinelibrary.wiley.com/doi/10.1111/rssc.12435).
