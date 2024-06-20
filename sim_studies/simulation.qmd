@@ -1,0 +1,238 @@
+---
+title: "Simulated Data in Stan"
+subtitle: "A Workflow for the Bayesian Workflow"
+author: Mitzi Morris
+format:
+  html:
+    theme:
+      - theming/theme.scss
+      - cosmo
+    syntax-definitions:
+      - theming/stan.xml
+    highlight-style:
+      light: theming/tango.theme
+    code-copy: true
+    code-overflow: wrap
+    css: theming/quarto_styles.css
+    toc: true
+    toc-location: left
+    grid:
+      body-width: 800px
+      margin-width: 200px
+
+reference-location: margin
+citation-location: margin
+
+jupyter: python3
+---
+
+```{python}
+#| echo: false
+import os
+import numpy as np
+import pandas as pd
+import json
+from random import randint
+from cmdstanpy import CmdStanModel, write_stan_json
+# notebook display options
+np.set_printoptions(precision=2)
+np.set_printoptions(suppress=True)
+np.set_printoptions(linewidth=200, threshold=1000)
+pd.set_option('display.precision', 2)
+pd.options.display.float_format = '{:.2f}'.format
+pd.set_option('display.max_columns', 20)
+pd.set_option('display.width', 200)
+```
+
+## Overview
+
+After model fitting comes model checking.
+Model checking consists of reconfiguring and extending the Stan model in order to test its coverage and predictive ability.
+This section is a recap of the Stan User's Guide chapters on [Posterior Inference and Model Checking](https://mc-stan.org/docs/stan-users-guide/posterior-prediction.html)
+
+## Posterior and Prior Predictive Checks
+
+Posterior predictive checking works by simulating
+new replicated data sets based on the fitted model parameters and then
+comparing statistics applied to the replicated data set with the same
+statistic applied to the original data set.
+If a model captures the data well, summary statistics such as
+sample mean and standard deviation, should have similar values in
+the original and replicated data sets.
+
+Prior predictive checks work the same way:  they fit the model to data simulated from the prior.
+This provides insight into what data sets would be consistent with the prior.
+The simulated datasets will not be calibrated with actual data, but extreme
+values help diagnose priors that are either too strong, too weak,
+poorly shaped, or poorly located.
+
+
+### Posterior predictive distribution
+
+Given a full Bayesian model $p(y, \theta)$, the posterior predictive
+density for new data $\tilde{y}$ given observed data $y$ is
+$$
+p(\tilde{y} \mid y)
+=
+\int p(\tilde{y} \mid \theta) \cdot p(\theta \mid y)
+\, \textrm{d}\theta.
+$$
+The product under the integral reduces to the joint posterior density
+$p(\tilde{y}, \theta \mid y),$ so that the integral is simply
+marginalizing out the parameters $\theta,$ leaving the predictive
+density $p(\tilde{y} \mid y)$ of future observations given past
+observations.
+
+
+
+### Prior predictive distribution
+
+The prior predictive distribution is
+$$
+y^{\textrm{sim}} \sim p(y).
+$$
+The prior predictive check is nothing more than the limiting case of a posterior predictive check with no data.
+Lacking data both data $y$ and an estimate of parameters $\theta$,
+it is necessary to first simulate the parameters
+$$
+\theta^{\textrm{sim}} \sim p(\theta)
+$$
+according to the priors, then simulate the data
+$$
+y^{\textrm{sim}} \sim p(y \mid \theta^{\textrm{sim}})
+$$
+according to the sampling distribution given the simulated
+parameters.  The result is a simulation from the joint
+distribution,
+$$
+(y^{\textrm{sim}}, \theta^{\textrm{sim}}) \sim p(y, \theta)
+$$
+and thus
+$$
+y^{\textrm{sim}} \sim p(y)
+$$
+is a simulation from the prior predictive distribution.
+
+
+## Generating $y^{\textrm{rep}}$ and $y^{\textrm{sim}}$
+
+Datasets $y^{\textrm{rep}}$ and $y^{\textrm{sim}}$ are created in the `generated quantities` block,
+by defining variables `y_rep` and `y_sim`, respectively.
+
+
+As an example, we use a simple linear regression model with parameters $\theta = (\alpha, \beta, \sigma)$
+```stan
+data {
+  int<lower=0> N;
+  vector[N] x;
+  vector[N] y;
+}
+parameters {
+  real alpha;
+  real beta;
+  real<lower=0> sigma;
+}
+model {
+  alpha ~ normal(0, 2);
+  beta ~ normal(0, 1);
+  sigma ~ normal(0, 1);
+  y ~ normal(alpha + beta * x, sigma);
+}
+```
+The replicated data set `y_rep` can be generated directly by adding the following generated quantities block
+```stan
+generated quantities {
+  array[N] real y_rep = normal_rng(alpha + beta * x, sigma);
+}
+```
+Each draw from the posterior will now contain the value of parameters `alpha`, `beta`, `sigma`, as well as vector `y_rep`,
+and a sample of size $N$ contain that many replicated datasets.
+
+
+In the case of the prior predictive check,
+generating dataset $y^{\textrm{sim}}$ first requires generating the corresponding $\theta^{\textrm{sim}}$.
+This is done in the `generated quantities` block using Stan's PRNG functions to define variables
+`alpha_sim`, `beta_sim`, `sigma_sim` according to the model's specified hyper-priors,
+and then defining variable `y_sim`, which is generated according to these values.
+
+```
+generated quantities {
+  real alpha_sim = normal_rng(0, 2);
+  real beta_sim = normal_rng(0, 1);
+  real<lower=0> sigma_sim = abs(normal_rng(0, 1));
+  array[N] real y_sim = normal_rng(alpha_sim + beta_sim * x, sigma_sim);
+}
+```
+Running Stan's sampler on this program results in a set of draws,
+each one containing variables `alpha_sim`, `beta_sim`, `sigma_sim`, as well as vector `y_sim`.
+
+Prior predictive checking can be done independently of model fitting and posterior predictive checking.
+To do this, rewrite the model as follows
+
+* the `generated quantities` block is the same as above,
+* the declaration of data variable `y` is omitted from `data` block,
+* the `parameters` and `model` blocks are removed entirely.
+
+The resulting code has no parameter variables or model block; therefore it is
+more properly called a "program" rather than a model.
+It runs quickly, since there are no parameters to estimate therefore no gradients to compute.
+Here is the corresponding data generating program:
+
+```stan
+data {
+  int<lower=0> N;
+}
+generated quantities {
+  vector[N] x_sim;
+  for (n in 1:N) {
+    x_sim[n]  = uniform_rng(-5, 5);
+  }
+  real alpha_sim = normal_rng(0, 2);
+  real beta_sim = normal_rng(0, 1);
+  real sigma_sim = abs(normal_rng(0, 1));
+  array[N] real y_sim = normal_rng(alpha_sim + beta_sim * x_sim, sigma_sim);
+}
+```
+
+## Workflow
+
+
+
+
+This would be a simple example of the “unfolding flower” structure that expands to include more model structure as more data come in, thus avoiding the problem that the usual forms of weak priors are very strong as the dimensionality of the model increases while the data remain fixed (see Section 3 of my Bayesian model-building by pure thought paper from 1996).
+
+
+
+
+**Best Practice:  Start Simple**  Starting from a trivial model makes it easy to verify that all components
+of the system are functioning properly.
+
+### Stan's "Hello, World!" model:  `bernoulli.stan`
+
+
+The CmdStan distribution provides a
+["Hello, World!"](https://en.wikipedia.org/wiki/%22Hello,_World!%22_program) program
+[`bernoulli.stan`](https://mc-stan.org/docs/cmdstan-guide/example_model_data.html),
+(also distributed with this notebook).
+
+```stan
+data {
+  int<lower=0> N;
+  array[N] int<lower=0, upper=1> y;
+}
+parameters {
+  real<lower=0, upper=1> theta;
+}
+model {
+  theta ~ beta(1, 1);  // uniform prior on interval 0,1
+  y ~ bernoulli(theta);  // likelihood
+}
+```
+
+
+
+
+
+
+
+
